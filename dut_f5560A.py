@@ -13,6 +13,7 @@ class f5560A_instrument:
         self.measurement = []
         self.f5560A_IDN = ''
         self.f5560_connected = False
+        self.lows = 'open'
 
     def connect_to_f5560A(self, instr_id):
         # ESTABLISH COMMUNICATION TO INSTRUMENT -----------------------------------------------------------------------
@@ -34,31 +35,52 @@ class f5560A_instrument:
         self.f5560A.write('^C')
         time.sleep(0.5)
         self.f5560A.write('MONITOR OFF')
-        print(f"\nmonitor: {self.f5560A.query('MONITOR?')}")
+        self.f5560A.write(f'lows {self.lows}')  # lows open is default state
 
-    def run_source(self, mode, rms, Ft):
+    def set_lows(self, lows='open'):
+        read_lows = self.f5560A.query('LOWS?')
+        if lows.capitalize() in ('OPEN', 'TIED'):
+            if self.lows == read_lows:
+                print(f'LOWS currently set to {lows}. No action was performed.')
+            else:
+                print(f"LOWS {read_lows}, which does not match last known state.\n"
+                      f"Proceeding to set LOWS to {lows} and overriding the user's prior selection")
+                self.f5560A.write(f'LOWS {lows}')
+                self._strobe_f5560A_A7_relays()
+                self.lows = lows
+        else:
+            print("Invalid command. Specify LOWS to be OPEN or TIED\n"
+                  f"Currently, LOWS {read_lows}")
+
+    def _strobe_f5560A_A7_relays(self):
+        time.sleep(1)
+        self.f5560A.write('mod p7p6,#h20,#h0')
+        time.sleep(1)
+        self.f5560A.write('mod p7p6,#h20,#h20')
+
+    def set_source(self, mode='V', rms=0.0, Ft=0.0):
         try:
-            if mode in ("a", "A"):
+            if mode.capitalize() == 'A':
                 self.f5560A.write(f'\nout {rms}A, {Ft}Hz')
                 time.sleep(2)
                 print(f'\nout: {rms}A, {Ft}Hz')
-                # self.f5560A.write('write P7P7, #hDC')  # TODO: this turns COMP3 ON - 22uF (distortion amp)
-                # self.f5560A.write('write P7P7, #hEC')  # TODO: this turns COMP2 ON - 22nF (distortion amp)
-                # self.f5560A.write('Mod P7P1SEL, #h40, 0')  # TODO: this turns idac fly cap inverter off in AC
-            # ("v", "V")
             else:
                 self.f5560A.write(f'\nout {rms}V, {Ft}Hz')
                 time.sleep(2)
                 print(f'\nout: {rms}V, {Ft}Hz')
-                # self.f5560A.write('Mod P7P1SEL, #h40, 0')  # TODO: this turns idac fly cap inverter off in AC
             time.sleep(1)
+        except ValueError:
+            raise
 
+    def run_source(self, mode, rms, Ft):
+        try:
+            self.set_source(mode, rms, Ft)
             self.f5560A.write('oper')
             time.sleep(5)
         except ValueError:
             raise
 
-    def standby(self):
+    def standby_f5560A(self):
         time.sleep(1)
         self.f5560A.write('STBY')
         self.f5560A.write('*WAI')

@@ -1,5 +1,6 @@
 import VisaClient
 import time
+import numpy as np
 
 instruments = {'f8588A': {'address': '10.205.92.156', 'port': '3490', 'gpib': '6', 'mode': 'SOCKET'}}
 
@@ -69,6 +70,9 @@ class f8588A_instrument:
         self.f8588A_IDN = ''
         self.f8588_connected = False
 
+        self.mode = 'VOLT'  # VOLT or CURR
+        self.function = 'DC'  # DC or AC
+
     def connect_to_f8588A(self, instr_id):
         # ESTABLISH COMMUNICATION TO INSTRUMENTS -----------------------------------------------------------------------
         self.f8588A = VisaClient.VisaClient(instr_id)  # Fluke 8588A
@@ -88,7 +92,7 @@ class f8588A_instrument:
         print(self.f8588A)
 
     ####################################################################################################################
-    def setup_meter(self, output='CURR', mode='AC'):
+    def setup_f8588A(self, mode='CURR', function='AC'):
         """
         The secondary readings available for AC voltage and current are: “FREQuency”,
         “PERiod”, "PK to Pk", "Crest Factor", "Pos Peak", "Neg peak", “OFF” (turns off
@@ -97,30 +101,56 @@ class f8588A_instrument:
         FETCh?.
 
         :param output: CURRent or VOLTage
-        :param mode: AC or DC
+        :param function: AC or DC
         :return:
         """
-        self.f8588A.write(f'CONF:{output}:{mode}')
-        self.f8588A.write(f'{output}:{mode}:RANGE:AUTO ON')
-        time.sleep(1)
+        self.mode = mode
+        self.function = function
 
-    def read_meter(self, output, mode):
+        self.f8588A.write(f'CONF:{mode}:{function}')
+        self.f8588A.write(f'{mode}:{function}:RANGE:AUTO ON')
+        time.sleep(0.5)
+
+    ####################################################################################################################
+    def set_f8588A_function(self, frequency=0.0):
+        if frequency > 0:
+            self.function = 'AC'
+        else:
+            self.function = 'DC'
+
+        self.f8588A.write(f'CONF:{self.mode}:{self.function}')
+        self.f8588A.write(f'{self.mode}:{self.function}:RANGE:AUTO ON')
+        time.sleep(0.5)
+
+    ####################################################################################################################
+    def read_f8588A(self, mode='', function='', samples=1):
         freqval = 0.0
         time.sleep(1)
+        if output and mode:
+            self.setup_f8588A(mode=mode, function=function)
         self.f8588A.write('INIT:IMM')
 
         # Primary result = 1 (page 17 of 8588A's programmers manual)
         # A return of 9.91E+37 indicates there is not a valid value to return (NaN - not a number)
         # time delay prevents NaN result
-        time.sleep(0.2)
-        outval = to_float(self.f8588A.query('FETCH? 1'))
+
+        readings = np.zeros(samples)
+        for idx in range(samples):
+            self.f8588A.write('INIT:IMM')
+            time.sleep(0.2)
+            readings[idx] = to_float(self.f8588A.query('FETCH? 1'))
+            time.sleep(0.2)
+
+        outval = readings.mean()
+        std = np.sqrt(np.mean(abs(readings - outval) ** 2))
+
         dmm_range = to_float(self.f8588A.query(f'{output}:{mode}:RANGE?'))
 
         if mode == 'AC':
             # FREQuency = 2 (page 17 of 8588A's programmers manual)
             freqval = to_float(self.f8588A.query('FETCH? 2'))
 
-        return outval, dmm_range, freqval
+        return outval, dmm_range, freqval, std
 
     ####################################################################################################################
     def setup_digitizer(self, mode, oper_range, filter_val, N, aperture):
@@ -160,9 +190,9 @@ if __name__ == "__main__":
     instr = f8588A_instrument()
 
     instr.connect_to_f8588A(instruments)
-    instr.setup_meter(output, mode)
+    instr.setup_f8588A(output, mode)
 
-    outval, dmm_range, freqval = instr.read_meter(mode)
+    outval, dmm_range, freqval = instr.read_f8588A(mode)
     print(f"\nOutput: {outval}\nFrequency: {freqval} Hz")
 
     instr.close_f8588A()
